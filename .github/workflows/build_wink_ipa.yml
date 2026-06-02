@@ -13,6 +13,10 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         
+      - name: Setup Theos dependencies
+        run: |
+          brew install ldid xz
+          
       - name: Setup Theos
         run: |
           git clone --recursive https://github.com/theos/theos.git ~/theos
