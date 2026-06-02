@@ -15,7 +15,7 @@ jobs:
         
       - name: Setup Theos
         run: |
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          git clone --recursive https://github.com/theos/theos.git ~/theos
           echo "THEOS=~/theos" >> $GITHUB_ENV
           
       - name: Build WinkCrack Tweak
@@ -31,7 +31,6 @@ jobs:
           
       - name: Inject Tweak into IPA
         run: |
-          
           # Cờ -u để tạo ra ipa unsign (dành cho TrollStore / Sideloadly)
           azule -i com.meitu.wink_3.6.1_und3fined.ipa -o Wink_VIP_Injected.ipa -f WinkCrack.dylib -u
           
