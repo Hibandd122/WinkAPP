@@ -34,7 +34,12 @@ jobs:
         run: |
           cd TweakSource
           make package
-          cp .theos/obj/debug/WinkCrack.dylib ../WinkCrack.dylib
+          # library.mk may output to arch subfolder
+          DLL=$(find .theos/obj -name "WinkCrack.dylib" 2>/dev/null | head -1)
+          if [ -z "$DLL" ]; then
+            echo "ERROR: Could not find built dylib" && exit 1
+          fi
+          cp "$DLL" ../WinkCrack.dylib
           
       - name: Setup Azule
         run: |

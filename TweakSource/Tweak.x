@@ -1,5 +1,5 @@
 #import <UIKit/UIKit.h>
-#import <Foundation/Foundation.h>
+#import <objc/runtime.h>
 
 // ── Toggle state ────────────────────────────────
 
@@ -12,6 +12,20 @@ static BOOL crackEnabled(void) {
 static void setCrackEnabled(BOOL on) {
     [[NSUserDefaults standardUserDefaults] setBool:!on forKey:kDisableKey];
     [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+// ── Method swizzle helper ───────────────────────
+
+static void swizzle(Class cls, SEL orig, SEL repl) {
+    Method m1 = class_getInstanceMethod(cls, orig);
+    Method m2 = class_getInstanceMethod(cls, repl);
+    if (m1 && m2) {
+        if (class_addMethod(cls, orig, method_getImplementation(m2), method_getTypeEncoding(m2))) {
+            class_replaceMethod(cls, repl, method_getImplementation(m1), method_getTypeEncoding(m1));
+        } else {
+            method_exchangeImplementations(m1, m2);
+        }
+    }
 }
 
 // ── Floating button manager ─────────────────────
@@ -30,8 +44,7 @@ static WinkFloatingButton *sharedFloating;
 - (instancetype)initWithWindow:(UIWindow *)window {
     if (self = [super init]) {
 
-        CGFloat size = 48.0;
-        CGFloat margin = 14.0;
+        CGFloat size = 48.0, margin = 14.0;
         CGFloat sw = window.bounds.size.width;
         CGFloat sh = window.bounds.size.height;
 
@@ -45,7 +58,7 @@ static WinkFloatingButton *sharedFloating;
         _button.titleLabel.font = [UIFont systemFontOfSize:13 weight:UIFontWeightBold];
         [_button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
 
-        [_button addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+        [_button addAction:[UIAction actionWithHandler:^(__kindof UIAction *a) {
             [self onTap];
         }] forControlEvents:UIControlEventTouchUpInside];
 
@@ -69,14 +82,11 @@ static WinkFloatingButton *sharedFloating;
 }
 
 - (void)pingTop {
-    if (_button.superview) {
-        [_button.superview bringSubviewToFront:_button];
-    }
+    if (_button.superview) [_button.superview bringSubviewToFront:_button];
 }
 
 - (void)onTap {
-    BOOL wasOn = crackEnabled();
-    BOOL nowOn = !wasOn;
+    BOOL wasOn = crackEnabled(), nowOn = !wasOn;
     setCrackEnabled(nowOn);
     [self refreshLook];
 
@@ -88,28 +98,19 @@ static WinkFloatingButton *sharedFloating;
 
     if (nowOn && !wasOn) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-            [self showResetAlert];
-        });
+                       dispatch_get_main_queue(), ^{ [self showResetAlert]; });
     }
 }
 
 - (void)onPan:(UIPanGestureRecognizer *)pan {
-    UIView *sv = _button.superview;
-    if (!sv) return;
+    UIView *sv = _button.superview; if (!sv) return;
     CGPoint t = [pan translationInView:sv];
     CGPoint c = CGPointMake(_button.center.x + t.x, _button.center.y + t.y);
-
-    CGFloat half = _button.bounds.size.width / 2.0;
-    CGFloat pad = 8.0;
-    CGFloat sw = sv.bounds.size.width;
-    CGFloat sh = sv.bounds.size.height;
-    CGFloat top = sv.safeAreaInsets.top;
-    CGFloat bot = sv.safeAreaInsets.bottom;
-
+    CGFloat half = _button.bounds.size.width / 2.0, pad = 8.0;
+    CGFloat sw = sv.bounds.size.width, sh = sv.bounds.size.height;
     c.x = MAX(half + pad, MIN(sw - half - pad, c.x));
-    c.y = MAX(half + pad + top, MIN(sh - half - pad - bot, c.y));
-
+    c.y = MAX(half + pad + sv.safeAreaInsets.top,
+              MIN(sh - half - pad - sv.safeAreaInsets.bottom, c.y));
     _button.center = c;
     [pan setTranslation:CGPointZero inView:sv];
 }
@@ -130,7 +131,6 @@ static WinkFloatingButton *sharedFloating;
         alertControllerWithTitle:@"Wink VIP"
         message:@"VIP Crack da BAT.\nApp se thoat de ap dung.\nMo lai Wink sau do."
         preferredStyle:UIAlertControllerStyleAlert];
-
     [alert addAction:[UIAlertAction actionWithTitle:@"OK - Thoat App" style:UIAlertActionStyleDefault
         handler:^(UIAlertAction *a) {
             UIControl *ctl = [[UIControl alloc] init];
@@ -144,81 +144,68 @@ static WinkFloatingButton *sharedFloating;
 
 @end
 
-// ── Hook: Add floating button when window appears ──
+// ── Swizzled UIWindow methods ───────────────────
 
-%hook UIWindow
+static void swizzled_makeKeyAndVisible(id self, SEL _cmd) {
+    // Call original (we swapped IMPs, so calling this selector runs the original)
+    ((void (*)(id, SEL))objc_msgSend)(self, @selector(swizzled_makeKeyAndVisible));
 
-- (void)makeKeyAndVisible {
-    %orig;
     if (!sharedFloating) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
                        dispatch_get_main_queue(), ^{
             if (!sharedFloating) {
-                sharedFloating = [[WinkFloatingButton alloc] initWithWindow:self];
+                sharedFloating = [[WinkFloatingButton alloc] initWithWindow:(UIWindow *)self];
             }
         });
     }
 }
 
-// Keep button on top whenever any subview is added
-- (void)addSubview:(UIView *)view {
-    %orig;
+static void swizzled_addSubview(id self, SEL _cmd, UIView *view) {
+    ((void (*)(id, SEL, UIView *))objc_msgSend)(self, @selector(swizzled_addSubview:), view);
     if (sharedFloating && view != sharedFloating.button) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            [sharedFloating pingTop];
-        });
+        dispatch_async(dispatch_get_main_queue(), ^{ [sharedFloating pingTop]; });
     }
 }
 
-// Handle screen rotation — reposition button
-- (void)setBounds:(CGRect)bounds {
-    %orig;
+static void swizzled_setBounds(id self, SEL _cmd, CGRect bounds) {
+    ((void (*)(id, SEL, CGRect))objc_msgSend)(self, @selector(swizzled_setBounds:), bounds);
     if (sharedFloating) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            // Clamp button position within new bounds
             UIButton *b = sharedFloating.button;
-            CGFloat half = b.bounds.size.width / 2.0;
-            CGFloat pad = 8.0;
+            CGFloat half = b.bounds.size.width / 2.0, pad = 8.0;
             CGPoint c = b.center;
             c.x = MAX(half + pad, MIN(bounds.size.width - half - pad, c.x));
-            c.y = MAX(half + pad + self.safeAreaInsets.top,
-                      MIN(bounds.size.height - half - pad - self.safeAreaInsets.bottom, c.y));
+            c.y = MAX(half + pad + ((UIWindow *)self).safeAreaInsets.top,
+                      MIN(bounds.size.height - half - pad - ((UIWindow *)self).safeAreaInsets.bottom, c.y));
             b.center = c;
         });
     }
 }
 
-%end
+// ── Swizzled NSURLSession ───────────────────────
 
-// ── Hook: Intercept API response to inject VIP data ──
+typedef NSURLSessionDataTask * (*DataTaskIMP)(id, SEL, NSURLRequest *, void (^)(NSData *, NSURLResponse *, NSError *));
 
-%hook NSURLSession
+static DataTaskIMP orig_dataTask;
 
-- (NSURLSessionDataTask *)dataTaskWithRequest:(NSURLRequest *)request
-                            completionHandler:(void (^)(NSData *, NSURLResponse *, NSError *))handler {
+static NSURLSessionDataTask *swizzled_dataTask(id self, SEL _cmd, NSURLRequest *req, void (^handler)(NSData *, NSURLResponse *, NSError *)) {
+    if ([req.URL.absoluteString containsString:@"api-sub.meitu.com/v2/user/vip_info_by_group.json"]) {
 
-    if ([request.URL.absoluteString containsString:@"api-sub.meitu.com/v2/user/vip_info_by_group.json"]) {
-
-        void (^custom)(NSData *, NSURLResponse *, NSError *) =
-        ^(NSData *data, NSURLResponse *response, NSError *error) {
-
+        void (^wrapped)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
             if (!crackEnabled()) {
                 if (handler) handler(data, response, error);
                 return;
             }
-
             if (data && !error) {
                 NSError *je;
                 NSMutableDictionary *json = [NSJSONSerialization
                     JSONObjectWithData:data options:NSJSONReadingMutableContainers error:&je];
-
                 if (!je && json) {
                     NSMutableDictionary *d = json[@"data"];
                     if (!d || [d isKindOfClass:[NSNull class]]) {
                         d = [NSMutableDictionary dictionary];
                         json[@"data"] = d;
                     }
-
                     d[@"active_sub_type"] = @2;
                     d[@"account_type"] = @1;
                     d[@"sub_type_name"] = @"VIP";
@@ -249,14 +236,34 @@ static WinkFloatingButton *sharedFloating;
                     return;
                 }
             }
-
             if (handler) handler(data, response, error);
         };
 
-        return %orig(request, custom);
+        return orig_dataTask(self, _cmd, req, wrapped);
     }
-
-    return %orig;
+    return orig_dataTask(self, _cmd, req, handler);
 }
 
-%end
+// ── Constructor — called when dylib loads ───────
+
+__attribute__((constructor))
+static void winkcrack_init(void) {
+    // UIWindow hooks
+    Class winClass = objc_getClass("UIWindow");
+    if (winClass) {
+        swizzle(winClass, @selector(makeKeyAndVisible), @selector(swizzled_makeKeyAndVisible));
+        swizzle(winClass, @selector(addSubview:), @selector(swizzled_addSubview:));
+        swizzle(winClass, @selector(setBounds:), @selector(swizzled_setBounds:));
+    }
+
+    // NSURLSession hook — save original IMP
+    Class sessClass = objc_getClass("NSURLSession");
+    if (sessClass) {
+        Method m = class_getInstanceMethod(sessClass,
+            @selector(dataTaskWithRequest:completionHandler:));
+        if (m) {
+            orig_dataTask = (DataTaskIMP)method_getImplementation(m);
+            method_setImplementation(m, (IMP)swizzled_dataTask);
+        }
+    }
+}
