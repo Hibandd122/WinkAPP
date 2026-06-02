@@ -32,7 +32,14 @@ static void killApp(void) {
 }
 
 static void showResetAlert(void) {
-    UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
+    UIWindow *kw = nil;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) {
+            kw = ((UIWindowScene *)scene).windows.firstObject;
+            break;
+        }
+    }
+    UIViewController *root = kw.rootViewController;
     while (root.presentedViewController) root = root.presentedViewController;
 
     UIAlertController *alert = [UIAlertController
