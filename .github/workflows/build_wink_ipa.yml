@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - 'TweakSource/**'
+      - '.github/workflows/**'
 
 jobs:
   build:
@@ -46,10 +47,12 @@ jobs:
           
       - name: Inject Tweak into IPA
         run: |
-          azule -i com.meitu.wink_3.6.1_und3fined.ipa -o Wink_VIP_Injected.ipa -f WinkCrack.dylib -u
+          # Bổ sung tham số đầu ra cuối cùng một cách chính xác
+          mkdir -p output_ipa
+          azule -i com.meitu.wink_3.6.1_und3fined.ipa -o output_ipa/Wink_VIP_Injected.ipa -f WinkCrack.dylib -u
           
       - name: Upload Injected IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Wink-VIP-Injected-Unsigned-IPA
-          path: Wink_VIP_Injected.ipa
+          path: output_ipa/Wink_VIP_Injected.ipa
