@@ -8,5 +8,6 @@ TWEAK_NAME = WinkCrack
 
 WinkCrack_FILES = Tweak.x
 WinkCrack_CFLAGS = -fobjc-arc
+WinkCrack_FRAMEWORKS = UIKit
 
 include $(THEOS_MAKE_PATH)/tweak.mk
