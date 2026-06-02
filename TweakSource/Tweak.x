@@ -29,6 +29,20 @@ static void swizzle(Class cls, SEL orig, SEL repl) {
     }
 }
 
+// ── Find key window helper ──────────────────────
+
+static UIWindow *findKeyWindow(void) {
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) {
+            for (UIWindow *w in ((UIWindowScene *)scene).windows) {
+                if (w.isKeyWindow) return w;
+            }
+            return ((UIWindowScene *)scene).windows.firstObject;
+        }
+    }
+    return [UIApplication sharedApplication].windows.firstObject;
+}
+
 // ── Floating button manager ─────────────────────
 
 @interface WinkFloatingButton : NSObject
@@ -117,13 +131,7 @@ static WinkFloatingButton *sharedFloating;
 }
 
 - (void)showResetAlert {
-    UIWindow *kw = nil;
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if ([scene isKindOfClass:[UIWindowScene class]]) {
-            kw = ((UIWindowScene *)scene).windows.firstObject;
-            if (kw) break;
-        }
-    }
+    UIWindow *kw = findKeyWindow();
     UIViewController *root = kw.rootViewController;
     while (root.presentedViewController) root = root.presentedViewController;
     if (!root) return;
@@ -145,21 +153,30 @@ static WinkFloatingButton *sharedFloating;
 
 @end
 
-// ── Swizzled UIWindow methods ───────────────────
+// ── Add button to best available window ──────────
 
-__attribute__((used)) static void swizzled_makeKeyAndVisible(id self, SEL _cmd) {
-    // Call original (we swapped IMPs, so calling this selector runs the original)
-    ((void (*)(id, SEL))objc_msgSend)(self, @selector(swizzled_makeKeyAndVisible));
-
-    if (!sharedFloating) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-            if (!sharedFloating) {
-                sharedFloating = [[WinkFloatingButton alloc] initWithWindow:(UIWindow *)self];
-            }
-        });
-    }
+static void ensureButton(void) {
+    if (sharedFloating) return;
+    UIWindow *w = findKeyWindow();
+    if (!w || w.bounds.size.width <= 1) return; // window not ready
+    sharedFloating = [[WinkFloatingButton alloc] initWithWindow:w];
 }
+
+// ── Swizzled viewDidAppear (most reliable trigger) ──
+
+__attribute__((used)) static void swizzled_viewDidAppear(id self, SEL _cmd, BOOL animated) {
+    ((void (*)(id, SEL, BOOL))objc_msgSend)(self, @selector(swizzled_viewDidAppear:), animated);
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        // First viewDidAppear — add button
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{ ensureButton(); });
+    });
+    // Refresh look in case state changed
+    if (sharedFloating) [sharedFloating refreshLook];
+}
+
+// ── Swizzled addSubview (keep button on top) ────
 
 __attribute__((used)) static void swizzled_addSubview(id self, SEL _cmd, UIView *view) {
     ((void (*)(id, SEL, UIView *))objc_msgSend)(self, @selector(swizzled_addSubview:), view);
@@ -167,6 +184,8 @@ __attribute__((used)) static void swizzled_addSubview(id self, SEL _cmd, UIView 
         dispatch_async(dispatch_get_main_queue(), ^{ [sharedFloating pingTop]; });
     }
 }
+
+// ── Swizzled setBounds (screen rotation) ────────
 
 __attribute__((used)) static void swizzled_setBounds(id self, SEL _cmd, CGRect bounds) {
     ((void (*)(id, SEL, CGRect))objc_msgSend)(self, @selector(swizzled_setBounds:), bounds);
@@ -249,15 +268,20 @@ __attribute__((used)) static NSURLSessionDataTask *swizzled_dataTask(id self, SE
 
 __attribute__((constructor))
 static void winkcrack_init(void) {
-    // UIWindow hooks
+    // Hook viewDidAppear — most reliable (fires after UI is ready)
+    Class vcClass = objc_getClass("UIViewController");
+    if (vcClass) {
+        swizzle(vcClass, @selector(viewDidAppear:), @selector(swizzled_viewDidAppear:));
+    }
+
+    // Hook UIWindow for button z-order and rotation
     Class winClass = objc_getClass("UIWindow");
     if (winClass) {
-        swizzle(winClass, @selector(makeKeyAndVisible), @selector(swizzled_makeKeyAndVisible));
         swizzle(winClass, @selector(addSubview:), @selector(swizzled_addSubview:));
         swizzle(winClass, @selector(setBounds:), @selector(swizzled_setBounds:));
     }
 
-    // NSURLSession hook — save original IMP
+    // Hook NSURLSession for API interception
     Class sessClass = objc_getClass("NSURLSession");
     if (sessClass) {
         Method m = class_getInstanceMethod(sessClass,
