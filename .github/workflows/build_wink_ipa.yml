@@ -1,0 +1,42 @@
+name: Build Wink Injected IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'TweakSource/**'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Theos
+        run: |
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          echo "THEOS=~/theos" >> $GITHUB_ENV
+          
+      - name: Build WinkCrack Tweak
+        run: |
+          cd TweakSource
+          make package
+          cp .theos/obj/debug/WinkCrack.dylib ../WinkCrack.dylib
+          
+      - name: Setup Azule
+        run: |
+          git clone https://github.com/Al4ise/Azule ~/Azule
+          sudo ln -s ~/Azule/azule /usr/local/bin/azule
+          
+      - name: Inject Tweak into IPA
+        run: |
+          
+          # Cờ -u để tạo ra ipa unsign (dành cho TrollStore / Sideloadly)
+          azule -i com.meitu.wink_3.6.1_und3fined.ipa -o Wink_VIP_Injected.ipa -f WinkCrack.dylib -u
+          
+      - name: Upload Injected IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wink-VIP-Injected-Unsigned-IPA
+          path: Wink_VIP_Injected.ipa
