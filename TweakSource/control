@@ -1,0 +1,9 @@
+Package: com.hican.winkcrack
+Name: WinkCrack
+Depends: mobilesubstrate
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Bẻ khoá VIP vĩnh viễn cho app Wink
+Maintainer: Hican
+Author: Hican
+Section: Tweaks
