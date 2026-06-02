@@ -147,7 +147,7 @@ static WinkFloatingButton *sharedFloating;
 
 // ── Swizzled UIWindow methods ───────────────────
 
-static void swizzled_makeKeyAndVisible(id self, SEL _cmd) {
+__attribute__((used)) static void swizzled_makeKeyAndVisible(id self, SEL _cmd) {
     // Call original (we swapped IMPs, so calling this selector runs the original)
     ((void (*)(id, SEL))objc_msgSend)(self, @selector(swizzled_makeKeyAndVisible));
 
@@ -161,14 +161,14 @@ static void swizzled_makeKeyAndVisible(id self, SEL _cmd) {
     }
 }
 
-static void swizzled_addSubview(id self, SEL _cmd, UIView *view) {
+__attribute__((used)) static void swizzled_addSubview(id self, SEL _cmd, UIView *view) {
     ((void (*)(id, SEL, UIView *))objc_msgSend)(self, @selector(swizzled_addSubview:), view);
     if (sharedFloating && view != sharedFloating.button) {
         dispatch_async(dispatch_get_main_queue(), ^{ [sharedFloating pingTop]; });
     }
 }
 
-static void swizzled_setBounds(id self, SEL _cmd, CGRect bounds) {
+__attribute__((used)) static void swizzled_setBounds(id self, SEL _cmd, CGRect bounds) {
     ((void (*)(id, SEL, CGRect))objc_msgSend)(self, @selector(swizzled_setBounds:), bounds);
     if (sharedFloating) {
         dispatch_async(dispatch_get_main_queue(), ^{
@@ -189,7 +189,7 @@ typedef NSURLSessionDataTask * (*DataTaskIMP)(id, SEL, NSURLRequest *, void (^)(
 
 static DataTaskIMP orig_dataTask;
 
-static NSURLSessionDataTask *swizzled_dataTask(id self, SEL _cmd, NSURLRequest *req, void (^handler)(NSData *, NSURLResponse *, NSError *)) {
+__attribute__((used)) static NSURLSessionDataTask *swizzled_dataTask(id self, SEL _cmd, NSURLRequest *req, void (^handler)(NSData *, NSURLResponse *, NSError *)) {
     if ([req.URL.absoluteString containsString:@"api-sub.meitu.com/v2/user/vip_info_by_group.json"]) {
 
         void (^wrapped)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
