@@ -13,10 +13,16 @@ if (typeof $response === "undefined" || typeof $done === "undefined") {
     if (typeof $done === "function") $done({});
 }
 
+var headers = $response.headers || {};
+// Vô hiệu hóa cache để app lấy data mới nhất mỗi lần pull-to-refresh
+headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate";
+headers["Pragma"] = "no-cache";
+headers["Expires"] = "0";
+
 // Kiểm tra toggle từ Persistent Store
 if (typeof $prefs !== "undefined" && $prefs.valueForKey("WinkCrack_Enable") === "false") {
-    // Toggle OFF — cho request đi qua không chỉnh sửa
-    $done({});
+    // Toggle OFF — cho request đi qua nhưng cập nhật headers
+    $done({ headers: headers });
 } else {
     // Toggle ON — inject VIP data
     try {
@@ -55,10 +61,10 @@ if (typeof $prefs !== "undefined" && $prefs.valueForKey("WinkCrack_Enable") === 
             "show_renew_flag":               true
         };
 
-        $done({ body: JSON.stringify(obj) });
+        $done({ body: JSON.stringify(obj), headers: headers });
     } catch (e) {
         // Parse lỗi → cho đi qua
         console.log("[WinkCrack] Lỗi parse: " + e);
-        $done({});
+        $done({ headers: headers });
     }
 }

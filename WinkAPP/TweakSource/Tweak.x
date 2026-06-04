@@ -62,6 +62,7 @@ static UIWindow *findKeyWindow(void) {
 - (instancetype)initWithWindow:(UIWindow *)window;
 - (void)refreshLook;
 - (void)pingTop;
+- (void)showToast:(NSString *)msg;
 @end
 
 static WinkFloatingButton *sharedFloating;
@@ -94,6 +95,17 @@ static WinkFloatingButton *sharedFloating;
         [_button addGestureRecognizer:pan];
 
         [self refreshLook];
+        
+        // Restore position
+        NSString *posStr = [[NSUserDefaults standardUserDefaults] stringForKey:@"WinkCrack_BtnPos"];
+        if (posStr) {
+            CGPoint p = CGPointFromString(posStr);
+            // Validate point is within screen
+            if (p.x > 0 && p.y > 0 && p.x < sw && p.y < sh) {
+                _button.center = p;
+            }
+        }
+        
         [window addSubview:_button];
         [window bringSubviewToFront:_button];
     }
@@ -117,16 +129,39 @@ static WinkFloatingButton *sharedFloating;
     setCrackEnabled(nowOn);
     [self refreshLook];
 
+    // Xoá cache để app có thể lấy data mới mà không cần thoát
+    [[NSURLCache sharedURLCache] removeAllCachedResponses];
+
+    // Phát Notification giả lập app vừa được mở lại để ép Wink tự động load lại dữ liệu
+    [[NSNotificationCenter defaultCenter] postNotificationName:UIApplicationDidBecomeActiveNotification object:nil];
+    [[NSNotificationCenter defaultCenter] postNotificationName:UIApplicationWillEnterForegroundNotification object:nil];
+
     _button.transform = CGAffineTransformMakeScale(1.25, 1.25);
     [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.5
           initialSpringVelocity:0.5 options:0
                      animations:^{ _button.transform = CGAffineTransformIdentity; }
                      completion:nil];
 
-    if (nowOn && !wasOn) {
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{ [self showResetAlert]; });
-    }
+    // Tự động trigger viewWillAppear của trang hiện tại để làm mới UI ngay lập tức
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.1 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIWindow *kw = findKeyWindow();
+        UIViewController *topVC = kw.rootViewController;
+        while (topVC.presentedViewController) topVC = topVC.presentedViewController;
+        if ([topVC isKindOfClass:[UITabBarController class]]) topVC = ((UITabBarController *)topVC).selectedViewController;
+        if ([topVC isKindOfClass:[UINavigationController class]]) topVC = ((UINavigationController *)topVC).visibleViewController;
+        
+        if (topVC) {
+            [topVC viewWillAppear:NO];
+            [topVC viewDidAppear:NO];
+        }
+    });
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ 
+                       NSString *msg = nowOn ? @"VIP Crack BẬT\nĐã tự động làm mới VIP!" 
+                                             : @"VIP Crack TẮT\nĐã tự động làm mới VIP!";
+                       [self showToast:msg]; 
+                   });
 }
 
 - (void)onPan:(UIPanGestureRecognizer *)pan {
@@ -140,27 +175,47 @@ static WinkFloatingButton *sharedFloating;
               MIN(sh - half - pad - sv.safeAreaInsets.bottom, c.y));
     _button.center = c;
     [pan setTranslation:CGPointZero inView:sv];
+    
+    if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled) {
+        [[NSUserDefaults standardUserDefaults] setObject:NSStringFromCGPoint(_button.center) forKey:@"WinkCrack_BtnPos"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
 }
 
-- (void)showResetAlert {
-    UIWindow *kw = findKeyWindow();
-    UIViewController *root = kw.rootViewController;
-    while (root.presentedViewController) root = root.presentedViewController;
-    if (!root) return;
+- (void)showToast:(NSString *)msg {
+    UIWindow *w = findKeyWindow();
+    if (!w) return;
 
-    UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:@"Wink VIP"
-        message:@"VIP Crack da BAT.\nApp se thoat de ap dung.\nMo lai Wink sau do."
-        preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK - Thoat App" style:UIAlertActionStyleDefault
-        handler:^(UIAlertAction *a) {
-            UIControl *ctl = [[UIControl alloc] init];
-            [ctl sendAction:@selector(suspend) to:[UIApplication sharedApplication] forEvent:nil];
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)),
-                           dispatch_get_main_queue(), ^{ exit(0); });
-        }]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"De sau" style:UIAlertActionStyleCancel handler:nil]];
-    [root presentViewController:alert animated:YES completion:nil];
+    UILabel *toast = [[UILabel alloc] init];
+    toast.text = msg;
+    toast.textColor = [UIColor whiteColor];
+    toast.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.9];
+    toast.textAlignment = NSTextAlignmentCenter;
+    toast.font = [UIFont systemFontOfSize:13 weight:UIFontWeightMedium];
+    toast.numberOfLines = 0;
+    toast.layer.cornerRadius = 12;
+    toast.layer.masksToBounds = YES;
+
+    CGSize max = CGSizeMake(w.bounds.size.width - 60, 100);
+    CGSize sz = [toast sizeThatFits:max];
+    toast.frame = CGRectMake(0, 0, sz.width + 32, sz.height + 16);
+    toast.center = CGPointMake(w.bounds.size.width / 2, w.bounds.size.height - 120);
+    toast.alpha = 0;
+    toast.transform = CGAffineTransformMakeScale(0.8, 0.8);
+
+    [w addSubview:toast];
+
+    [UIView animateWithDuration:0.4 delay:0 usingSpringWithDamping:0.6 initialSpringVelocity:0.5 options:UIViewAnimationOptionCurveEaseOut animations:^{
+        toast.alpha = 1;
+        toast.transform = CGAffineTransformIdentity;
+    } completion:^(BOOL finished) {
+        [UIView animateWithDuration:0.3 delay:2.0 options:UIViewAnimationOptionCurveEaseIn animations:^{
+            toast.alpha = 0;
+            toast.transform = CGAffineTransformMakeScale(0.8, 0.8);
+        } completion:^(BOOL finished) {
+            [toast removeFromSuperview];
+        }];
+    }];
 }
 
 @end
