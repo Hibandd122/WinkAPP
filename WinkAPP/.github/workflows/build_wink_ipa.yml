@@ -1,0 +1,68 @@
+name: Build Wink Injected IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'TweakSource/**'
+      - '.github/workflows/**'
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        
+      - name: Setup Theos dependencies
+        run: |
+          brew install ldid xz
+          
+      - name: Setup Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git ~/theos
+          echo "THEOS=~/theos" >> $GITHUB_ENV
+          
+      - name: Setup iOS SDK
+        run: |
+          curl -LO https://github.com/theos/sdks/archive/master.zip
+          unzip master.zip
+          mv sdks-master/*.sdk ~/theos/sdks/
+          rm -rf master.zip sdks-master
+          
+      - name: Build WinkCrack Tweak
+        run: |
+          cd TweakSource
+          make package
+          # library.mk may output to arch subfolder
+          DLL=$(find .theos/obj -name "WinkCrack.dylib" 2>/dev/null | head -1)
+          if [ -z "$DLL" ]; then
+            echo "ERROR: Could not find built dylib" && exit 1
+          fi
+          cp "$DLL" ../WinkCrack.dylib
+          
+      - name: Setup Azule
+        run: |
+          git clone https://github.com/Al4ise/Azule ~/Azule
+          sudo ln -s ~/Azule/azule /usr/local/bin/azule
+          
+      - name: Pull LFS
+        run: |
+          git lfs pull
+          
+      - name: Create Dylib and CydiaSubstrate Folder
+        run: |
+          # The newest Azule needs absolute path or exact folder structure to avoid downloading substitutes
+          mkdir -p inject
+          cp WinkCrack.dylib inject/
+          
+      - name: Inject Tweak into IPA
+        run: |
+          mkdir -p output_ipa
+          azule -i com.meitu.wink_3.6.1_und3fined.ipa -o output_ipa -f "$(pwd)/inject/WinkCrack.dylib" -u -m -n Wink_VIP_Injected
+          
+      - name: Upload Injected IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Wink-VIP-Injected-Unsigned-IPA
+          path: output_ipa/Wink_VIP_Injected.ipa

@@ -1,0 +1,9 @@
+#!name=Wink Forever VIP
+#!desc=Bẻ khóa VIP vĩnh viễn cho Wink APP
+#!author=yqc_123 & Hican
+
+[Script]
+WinkForeverVipCrack = type=http-response, pattern=^https?:\/\/api-sub\.meitu\.com\/v2\/user\/vip_info_by_group\.json, requires-body=1, script-path=https://raw.githubusercontent.com/Hibandd122/WinkAPP/main/WinkForeverVipCrack.js
+
+[MITM]
+hostname = %APPEND% api-sub.meitu.com
