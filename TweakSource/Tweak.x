@@ -202,66 +202,145 @@ __attribute__((used)) static void swizzled_setBounds(id self, SEL _cmd, CGRect b
     }
 }
 
-// ── Swizzled NSURLSession ───────────────────────
+// ── Response rewriting ─────────────────────────
+
+static NSString *const kApiHost = @"api-sub.meitu.com";
 
 typedef NSURLSessionDataTask * (*DataTaskIMP)(id, SEL, NSURLRequest *, void (^)(NSData *, NSURLResponse *, NSError *));
+typedef NSURLSessionDataTask * (*DataTaskURLIMP)(id, SEL, NSURL *, void (^)(NSData *, NSURLResponse *, NSError *));
 
 static DataTaskIMP orig_dataTask;
+static DataTaskURLIMP orig_dataTaskWithURL;
+
+static BOOL isVipEndpoint(NSString *url) {
+    if (![url containsString:kApiHost]) return NO;
+    if ([url containsString:@"/v2/user/vip_info.json"]) return YES;
+    if ([url containsString:@"/v2/user/vip_info_by_group.json"]) return YES;
+    if ([url containsString:@"/v2/user/rights_list.json"]) return YES;
+    if ([url containsString:@"/v2/user/rights_info.json"]) return YES;
+    if ([url containsString:@"/v2/contract/sub/get_valid_contract.json"]) return YES;
+    if ([url containsString:@"/v2/contract/sub/valid_contract_by_group.json"]) return YES;
+    if ([url containsString:@"/v2/contract/sub/get_all_valid_contract.json"]) return YES;
+    if ([url containsString:@"/v2/transaction/permission_check.json"]) return YES;
+    if ([url containsString:@"/v2/user/login_vip_check.json"]) return YES;
+    if ([url containsString:@"/v2/user/login_limit_check.json"]) return YES;
+    if ([url containsString:@"/v2/user/iap_migrate_check.json"]) return YES;
+    if ([url containsString:@"/v2/user/repeat_purchase_popup.json"]) return YES;
+    return NO;
+}
+
+static void forceSuccessTopLevel(NSMutableDictionary *json) {
+    [json removeObjectForKey:@"errcode"];
+    [json removeObjectForKey:@"err_code"];
+    [json removeObjectForKey:@"code"];
+    [json removeObjectForKey:@"msg"];
+}
+
+static NSMutableDictionary *vipDataDict(NSMutableDictionary *json) {
+    id d = json[@"data"];
+    if (![d isKindOfClass:[NSMutableDictionary class]]) {
+        d = [NSMutableDictionary dictionary];
+        json[@"data"] = d;
+    }
+    return d;
+}
+
+static void applyVipData(NSMutableDictionary *json) {
+    NSMutableDictionary *d = vipDataDict(json);
+    d[@"active_sub_type"] = @2;
+    d[@"account_type"] = @1;
+    d[@"sub_type_name"] = @"VIP";
+    d[@"active_sub_order_id"] = @"7069961436604422668";
+    d[@"current_order_invalid_time"] = @"32495508000000";
+    d[@"active_order_id"] = @"7069961436340181123";
+    d[@"use_vip"] = @YES;
+    d[@"have_valid_contract"] = @YES;
+    d[@"derive_type_name"] = @"VIP";
+    d[@"derive_type"] = @1;
+    d[@"is_vip"] = @YES;
+    d[@"membership"] = @{
+        @"id": @"4",
+        @"display_name": @"Wink VIP",
+        @"level": @1,
+        @"level_name": @"VIP"
+    };
+    d[@"active_promotion_status_list"] = @[@2];
+    d[@"sub_type"] = @2;
+    d[@"invalid_time"] = @"32495529599000";
+    d[@"valid_time"] = @"1569664800000";
+    d[@"active_product_id"] = @"0";
+    d[@"active_promotion_status"] = @2;
+    d[@"show_renew_flag"] = @YES;
+    forceSuccessTopLevel(json);
+}
+
+static void applyPermission(NSMutableDictionary *json) {
+    NSMutableDictionary *d = vipDataDict(json);
+    d[@"has_permission"] = @YES;
+    d[@"can_use"] = @YES;
+    forceSuccessTopLevel(json);
+}
+
+static void applyCheckSuccess(NSMutableDictionary *json) {
+    NSMutableDictionary *d = vipDataDict(json);
+    d[@"has_vip"] = @YES;
+    d[@"can_login"] = @YES;
+    d[@"allow"] = @YES;
+    forceSuccessTopLevel(json);
+}
+
+static void rewriteEndpointBody(NSString *url, NSMutableDictionary *json) {
+    if ([url containsString:@"/v2/transaction/permission_check.json"]) {
+        applyPermission(json);
+    } else if ([url containsString:@"/v2/user/login_vip_check.json"]
+               || [url containsString:@"/v2/user/login_limit_check.json"]
+               || [url containsString:@"/v2/user/iap_migrate_check.json"]
+               || [url containsString:@"/v2/user/repeat_purchase_popup.json"]) {
+        applyCheckSuccess(json);
+    } else {
+        applyVipData(json);
+    }
+}
+
+static void handleData(NSURLRequest *req, NSData *data, NSURLResponse *response, NSError *error,
+                       void (^handler)(NSData *, NSURLResponse *, NSError *)) {
+    NSString *url = req.URL.absoluteString;
+    if (!crackEnabled() || !isVipEndpoint(url)) {
+        if (handler) handler(data, response, error);
+        return;
+    }
+    if (data && !error) {
+        NSError *je;
+        id obj = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:&je];
+        if (!je && [obj isKindOfClass:[NSMutableDictionary class]]) {
+            rewriteEndpointBody(url, obj);
+            NSData *nd = [NSJSONSerialization dataWithJSONObject:obj options:0 error:nil];
+            if (nd && handler) handler(nd, response, error);
+            return;
+        }
+    }
+    if (handler) handler(data, response, error);
+}
 
 __attribute__((used)) static NSURLSessionDataTask *swizzled_dataTask(id self, SEL _cmd, NSURLRequest *req, void (^handler)(NSData *, NSURLResponse *, NSError *)) {
-    if ([req.URL.absoluteString containsString:@"api-sub.meitu.com/v2/user/vip_info_by_group.json"]) {
-
+    if (req.URL && isVipEndpoint(req.URL.absoluteString)) {
         void (^wrapped)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
-            if (!crackEnabled()) {
-                if (handler) handler(data, response, error);
-                return;
-            }
-            if (data && !error) {
-                NSError *je;
-                NSMutableDictionary *json = [NSJSONSerialization
-                    JSONObjectWithData:data options:NSJSONReadingMutableContainers error:&je];
-                if (!je && json) {
-                    NSMutableDictionary *d = json[@"data"];
-                    if (!d || [d isKindOfClass:[NSNull class]]) {
-                        d = [NSMutableDictionary dictionary];
-                        json[@"data"] = d;
-                    }
-                    d[@"active_sub_type"] = @2;
-                    d[@"account_type"] = @1;
-                    d[@"sub_type_name"] = @"VIP";
-                    d[@"active_sub_order_id"] = @"7069961436604422668";
-                    d[@"current_order_invalid_time"] = @"32495508000000";
-                    d[@"active_order_id"] = @"7069961436340181123";
-                    d[@"use_vip"] = @YES;
-                    d[@"have_valid_contract"] = @YES;
-                    d[@"derive_type_name"] = @"VIP";
-                    d[@"derive_type"] = @1;
-                    d[@"is_vip"] = @YES;
-                    d[@"membership"] = @{
-                        @"id": @"4",
-                        @"display_name": @"Wink VIP",
-                        @"level": @1,
-                        @"level_name": @"VIP"
-                    };
-                    d[@"active_promotion_status_list"] = @[@2];
-                    d[@"sub_type"] = @2;
-                    d[@"invalid_time"] = @"32495529599000";
-                    d[@"valid_time"] = @"1569664800000";
-                    d[@"active_product_id"] = @"0";
-                    d[@"active_promotion_status"] = @2;
-                    d[@"show_renew_flag"] = @YES;
-
-                    NSData *nd = [NSJSONSerialization dataWithJSONObject:json options:0 error:nil];
-                    if (handler) handler(nd, response, error);
-                    return;
-                }
-            }
-            if (handler) handler(data, response, error);
+            handleData(req, data, response, error, handler);
         };
-
         return orig_dataTask(self, _cmd, req, wrapped);
     }
     return orig_dataTask(self, _cmd, req, handler);
+}
+
+__attribute__((used)) static NSURLSessionDataTask *swizzled_dataTaskWithURL(id self, SEL _cmd, NSURL *url, void (^handler)(NSData *, NSURLResponse *, NSError *)) {
+    if (url && isVipEndpoint(url.absoluteString)) {
+        NSURLRequest *req = [NSURLRequest requestWithURL:url];
+        void (^wrapped)(NSData *, NSURLResponse *, NSError *) = ^(NSData *data, NSURLResponse *response, NSError *error) {
+            handleData(req, data, response, error, handler);
+        };
+        return orig_dataTaskWithURL(self, _cmd, url, wrapped);
+    }
+    return orig_dataTaskWithURL(self, _cmd, url, handler);
 }
 
 // ── Constructor — called when dylib loads ───────
@@ -289,6 +368,12 @@ static void winkcrack_init(void) {
         if (m) {
             orig_dataTask = (DataTaskIMP)method_getImplementation(m);
             method_setImplementation(m, (IMP)swizzled_dataTask);
+        }
+        Method m2 = class_getInstanceMethod(sessClass,
+            @selector(dataTaskWithURL:completionHandler:));
+        if (m2) {
+            orig_dataTaskWithURL = (DataTaskURLIMP)method_getImplementation(m2);
+            method_setImplementation(m2, (IMP)swizzled_dataTaskWithURL);
         }
     }
 }
